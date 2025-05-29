@@ -1,15 +1,10 @@
-import {
-  useEffect,
-  useState,
-  useRef,
-  useCallback,
-  lazy,
-  Suspense,
-} from "react";
+import { useEffect,useState,useRef,useCallback,lazy,Suspense,} from "react";
 import "./App.css";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { useWebSocket } from "./useWebSocket";
+import { formatTimestamp } from "./utils";
+import { getTodayRange, toLocalISOString } from "./dateUtils";
 
 const WeightChart = lazy(() => import("./WeightChart"));
 
@@ -30,73 +25,63 @@ function App() {
   });
   const [filterColor, setFilterColor] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
-  const [darkMode, setDarkMode] = useState(() => {
-    return localStorage.getItem("darkMode") === "true";
-  });
   const [showScrollTop, setShowScrollTop] = useState(false);
 
   const observerRef = useRef(null);
   const loadMoreRef = useRef(null);
   const historyTableRef = useRef(null);
+  const prevColorRef = useRef(""); // Thêm ref để theo dõi màu sắc trước đó
 
-  useEffect(() => {
-    localStorage.setItem("darkMode", darkMode);
-    if (darkMode) {
-      document.body.classList.add("dark-mode");
-    } else {
-      document.body.classList.remove("dark-mode");
+  // Helper: get color style
+  const getColorStyle = (colorStr) => {
+    const c = colorStr?.trim().toLowerCase();
+    let bg = "#eee",
+      fg = "black";
+    if (c === "red") {
+      bg = "red";
+      fg = "white";
+    } else if (c === "green") {
+      bg = "green";
+      fg = "white";
+    } else if (c === "blue") {
+      bg = "#007bff";
+      fg = "white";
     }
-  }, [darkMode]);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      if (historyTableRef.current.scrollTop > 300) {
-        setShowScrollTop(true);
-      } else {
-        setShowScrollTop(false);
-      }
+    return {
+      backgroundColor: bg,
+      color: fg,
+      borderRadius: "30px",
+      textAlign: "center",
     };
-
-    const tableDiv = historyTableRef.current;
-    tableDiv.addEventListener("scroll", handleScroll);
-    return () => tableDiv.removeEventListener("scroll", handleScroll);
-  }, []);
+  };
 
   const { connected } = useWebSocket((data) => {
     setWeight(data.weight || "--");
     const receivedColor = (data.color || "").trim().toLowerCase();
     setColor(receivedColor);
-
-    if (receivedColor === "blue") {
+    setTimestamp(formatTimestamp(data.timestamp));
+    // Chỉ hiện alert khi chuyển từ màu khác sang blue
+    if (receivedColor === "blue" && prevColorRef.current !== "blue") {
       setShowAlert(true);
-    } else {
+    } else if (receivedColor !== "blue" && prevColorRef.current === "blue") {
       setShowAlert(false);
     }
-
-    const date = new Date(
-      data.timestamp + (data.timestamp.endsWith("Z") ? "" : "Z")
-    );
-    const formatted = `${date.toLocaleTimeString()} - ${date.toLocaleDateString(
-      "vi-VN"
-    )}`;
-    setTimestamp(formatted);
-
+    prevColorRef.current = receivedColor;
     const newRecord = {
       weight: data.weight,
       color: data.color,
       timestamp: data.timestamp,
       status: data.status || "--",
     };
-
-    setFullHistory((prev) => {
-      if (prev.some((item) => item.timestamp === newRecord.timestamp))
-        return prev;
-      return [newRecord, ...prev];
-    });
+    setFullHistory((prev) =>
+      prev.some((item) => item.timestamp === newRecord.timestamp)
+        ? prev
+        : [newRecord, ...prev]
+    );
   });
 
   useEffect(() => {
-    fetch("http://192.168.1.8:8080/api/history?limit=15")
+    fetch("http://192.168.1.14:8080/api/history?limit=15")
       .then((res) => res.json())
       .then((data) => {
         const fetchedHistory = Array.isArray(data) ? data : [];
@@ -109,23 +94,32 @@ function App() {
   }, []);
 
   useEffect(() => {
-    let start,
-      end = new Date().toISOString();
+    let start, end;
     if (timeRange === "1h") {
-      start = new Date(Date.now() - 3600 * 1000).toISOString();
+      end = toLocalISOString(new Date());
+      start = toLocalISOString(new Date(Date.now() - 3600 * 1000));
     } else if (timeRange === "1d") {
-      start = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+      const { startOfDay, endOfDay } = getTodayRange();
+      start = startOfDay;
+      end = endOfDay;
     } else {
-      start = new Date(0).toISOString();
+      start = "1970-01-01T00:00:00";
+      end = toLocalISOString(new Date());
     }
 
+    console.log('[App.js] statistics fetch start:', start, 'end:', end);
     fetch(
-      `http://192.168.1.8:8080/api/statistics?start=${encodeURIComponent(
+      `http://192.168.1.14:8080/api/statistics?start=${encodeURIComponent(
         start
       )}&end=${encodeURIComponent(end)}`
     )
       .then((res) => res.json())
       .then((data) => {
+        console.log('[App.js] statistics.colors from API:', data.colors);
+        if (data.colors && typeof data.colors === 'object') {
+          const hasBlue = Object.keys(data.colors).some(k => k.toLowerCase() === 'blue');
+          console.log('[App.js] Has blue key in statistics.colors:', hasBlue);
+        }
         setStatistics((prev) => ({
           ...prev,
           colors: data.colors || {},
@@ -137,14 +131,16 @@ function App() {
         setStatistics((prev) => ({ ...prev, colors: {}, statuses: {} }));
       });
 
+    // Force start and end to be theo ngày local (00:00:00 và 23:59:59) cho all-statuses
+    const { startOfDay, endOfDay } = getTodayRange();
+    console.log('[App.js] all-statuses fetch start:', startOfDay, 'end:', endOfDay);
     fetch(
-      `http://192.168.1.8:8080/api/all-statuses?start=${encodeURIComponent(
-        start
-      )}&end=${encodeURIComponent(end)}`
+      `http://192.168.1.14:8080/api/all-statuses?start=${encodeURIComponent(
+        startOfDay
+      )}&end=${encodeURIComponent(endOfDay)}`
     )
       .then((res) => res.json())
       .then((data) => {
-        console.log("[Fetch] All statuses received: ", data);
         setStatistics((prev) => ({ ...prev, allStatuses: data }));
       })
       .catch((err) => {
@@ -159,7 +155,7 @@ function App() {
 
     const oldest = fullHistory[fullHistory.length - 1]?.timestamp;
     fetch(
-      `http://192.168.1.8:8080/api/history${
+      `http://192.168.1.14:8080/api/history${
         oldest ? `?before=${encodeURIComponent(oldest)}&limit=15` : "?limit=15"
       }`
     )
@@ -212,7 +208,7 @@ function App() {
 
   const handleAlertChoice = (action) => {
     const actionType = action === "continue" ? "blue_continue" : "blue_discard";
-    fetch("http://192.168.1.8:8080/api/control", {
+    fetch("http://192.168.1.14:8080/api/control", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: actionType }),
@@ -228,7 +224,7 @@ function App() {
   };
 
   function sendControlCommand(action) {
-    fetch("http://192.168.1.8:8080/api/control", {
+    fetch("http://192.168.1.14:8080/api/control", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action }),
@@ -238,7 +234,7 @@ function App() {
   }
 
   function toggleConveyor() {
-    fetch("http://192.168.1.8:8080/api/conveyor", {
+    fetch("http://192.168.1.14:8080/api/control", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "toggle" }),
@@ -263,23 +259,6 @@ function App() {
   return (
     <>
       <ToastContainer position="top-right" autoClose={3000} />
-      <button
-        onClick={() => setDarkMode(!darkMode)}
-        style={{
-          position: "fixed",
-          top: "20px",
-          right: "20px",
-          padding: "10px",
-          backgroundColor: darkMode ? "#fff" : "#333",
-          color: darkMode ? "#333" : "#fff",
-          border: "none",
-          borderRadius: "5px",
-          cursor: "pointer",
-        }}
-      >
-        {darkMode ? "Chế độ sáng" : "Chế độ tối"}
-      </button>
-
       <header>
         <h1>Hệ thống phân loại sản phẩm</h1>
       </header>
@@ -300,18 +279,6 @@ function App() {
             >
               ⏹️ Dừng
             </button>
-            <button
-              onClick={() => sendControlCommand("reset")}
-              className="reset-btn smart-btn"
-            >
-              🔄 Đặt lại
-            </button>
-          </div>
-          <div className="conveyor-control">
-            <h3>🛤️ Điều khiển băng tải</h3>
-            <button onClick={toggleConveyor} className="conveyor-btn smart-btn">
-              🔁 Bật/Tắt băng tải
-            </button>
           </div>
         </section>
 
@@ -325,9 +292,9 @@ function App() {
               <button onClick={() => handleAlertChoice("continue")}>
                 Tiếp tục
               </button>
-              <button onClick={() => handleAlertChoice("discard")}>
+              {/* <button onClick={() => handleAlertChoice("discard")}>
                 Bỏ ra
-              </button>
+              </button> */}
             </div>
           )}
           <div className="card-grid">
@@ -336,20 +303,16 @@ function App() {
               <p id="weight">{weight}</p>
             </div>
             <div
-              className="card"
-              style={{
-                backgroundColor:
-                  color === "red"
-                    ? "red"
-                    : color === "green"
-                    ? "green"
-                    : color === "blue"
-                    ? "#007bff"
-                    : "#eee",
-                color: ["red", "green", "blue"].includes(color)
-                  ? "white"
-                  : "black",
-              }}
+              className={
+                "card color-card " +
+                (color === "red"
+                  ? "red"
+                  : color === "green"
+                  ? "green"
+                  : color === "blue"
+                  ? "blue"
+                  : "")
+              }
             >
               <h3>Màu sắc</h3>
               <p id="color">
@@ -371,7 +334,7 @@ function App() {
               id="timeRange"
               value={timeRange}
               onChange={(e) => setTimeRange(e.target.value)}
-              style={{ marginLeft: "10px", padding: "8px" }}
+              className="select-filter"
             >
               <option value="1h">1 giờ</option>
               <option value="1d">1 ngày</option>
@@ -396,11 +359,7 @@ function App() {
               id="filterColor"
               value={filterColor}
               onChange={(e) => setFilterColor(e.target.value)}
-              style={{
-                marginLeft: "10px",
-                marginRight: "20px",
-                padding: "8px",
-              }}
+              className="select-filter"
             >
               <option value="">Tất cả</option>
               <option value="red">Red</option>
@@ -413,7 +372,7 @@ function App() {
               id="filterStatus"
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              style={{ marginLeft: "10px", padding: "8px" }}
+              className="select-filter"
             >
               <option value="">Tất cả</option>
               <option value="LIGHT GREEN">Light Green</option>
@@ -448,80 +407,24 @@ function App() {
                     <td colSpan="4">Không có dữ liệu</td>
                   </tr>
                 ) : (
-                  filteredHistory.slice(0, displayCount).map((item, idx) => {
-                    const ts = item.timestamp.endsWith("Z")
-                      ? item.timestamp
-                      : item.timestamp + "Z";
-                    const date = new Date(ts);
-                    const colorStr = (item.color || "").trim().toLowerCase();
-                    return (
-                      <tr key={idx}>
-                        <td>
-                          {date.toLocaleTimeString()} -{" "}
-                          {date.toLocaleDateString("vi-VN")}
-                        </td>
-                        <td>{item.weight}</td>
-                        <td
-                          style={{
-                            backgroundColor:
-                              colorStr === "red"
-                                ? "red"
-                                : colorStr === "green"
-                                ? "green"
-                                : colorStr === "blue"
-                                ? "#007bff"
-                                : "#eee",
-                            color: ["red", "green", "blue"].includes(colorStr)
-                              ? "white"
-                              : "black",
-                            borderRadius: "30px",
-                            textAlign: "center",
-                          }}
-                        >
-                          {colorStr || "Không xác định"}
-                        </td>
-                        <td>{item.status || "--"}</td>
-                      </tr>
-                    );
-                  })
+                  filteredHistory.slice(0, displayCount).map((item, idx) => (
+                    <tr key={idx}>
+                      <td>{formatTimestamp(item.timestamp)}</td>
+                      <td>{item.weight}</td>
+                      <td style={getColorStyle(item.color)}>
+                        {(item.color || "").trim().toLowerCase() || "Không xác định"}
+                      </td>
+                      <td>{item.status || "--"}</td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
-            <div
-              ref={loadMoreRef}
-              style={{ height: "20px", textAlign: "center" }}
-            >
+            <div ref={loadMoreRef} style={{ height: "20px", textAlign: "center" }}>
               {isLoading && <p>Đang tải...</p>}
-              {!hasMore && filteredHistory.length > 0 && (
-                <p>Không còn dữ liệu để tải</p>
-              )}
+              {!hasMore && filteredHistory.length > 0 && <p>Không còn dữ liệu để tải</p>}
             </div>
-            {showScrollTop && (
-              <button
-                onClick={() =>
-                  historyTableRef.current.scrollTo({
-                    top: 0,
-                    behavior: "smooth",
-                  })
-                }
-                style={{
-                  position: "sticky",
-                  bottom: "20px",
-                  right: "20px",
-                  float: "right",
-                  backgroundColor: "#007bff",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "50%",
-                  width: "40px",
-                  height: "40px",
-                  cursor: "pointer",
-                  boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
-                }}
-              >
-                ↑
-              </button>
-            )}
+            {showScrollTop && <button onClick={() => historyTableRef.current.scrollTo({ top: 0, behavior: "smooth" })} className="scroll-top-btn">↑</button>}
           </div>
         </section>
       </main>

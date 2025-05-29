@@ -36,21 +36,22 @@ export default function WeightChart({
     }
 
     const filtered = history.filter((item) => {
-      const date = new Date(
-        item.timestamp + (item.timestamp.endsWith("Z") ? "" : "Z")
-      );
+      let date;
+      if (typeof item.timestamp === "number") {
+        date = new Date(item.timestamp);
+      } else if (/^\d+$/.test(item.timestamp)) {
+        date = new Date(Number(item.timestamp));
+      } else if (typeof item.timestamp === "string") {
+        if (item.timestamp.endsWith && item.timestamp.endsWith("Z")) {
+          date = new Date(item.timestamp);
+        } else if (item.timestamp.includes("T")) {
+          date = new Date(item.timestamp);
+        } else {
+          date = new Date(item.timestamp.replace(" ", "T"));
+        }
+      }
       return date >= startTime && date <= endTime;
     });
-    console.log("[WeightChart] Raw history:", history);
-    console.log(
-      "[WeightChart] Time range:",
-      timeRange,
-      "Start:",
-      startTime,
-      "End:",
-      endTime
-    );
-    console.log("[WeightChart] Filtered history:", filtered);
     setFilteredHistory(filtered);
   }, [history, timeRange]);
 
@@ -67,17 +68,26 @@ export default function WeightChart({
       .reverse();
     if (displayHistory.length === 0) return;
 
-    console.log("[RecentChart] Display history:", displayHistory);
-    console.log("[RecentChart] Display range:", displayRange);
-
     const labels = displayHistory.map((item) => {
-      const date = new Date(
-        item.timestamp + (item.timestamp.endsWith("Z") ? "" : "Z")
-      );
+      let date;
+      if (typeof item.timestamp === "number") {
+        date = new Date(item.timestamp);
+      } else if (/^\d+$/.test(item.timestamp)) {
+        date = new Date(Number(item.timestamp));
+      } else if (typeof item.timestamp === "string") {
+        if (item.timestamp.endsWith && item.timestamp.endsWith("Z")) {
+          date = new Date(item.timestamp);
+        } else if (item.timestamp.includes("T")) {
+          date = new Date(item.timestamp);
+        } else {
+          date = new Date(item.timestamp.replace(" ", "T"));
+        }
+      }
       return date.toLocaleTimeString("vi-VN", {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
+        hour12: false,
       });
     });
 
@@ -224,13 +234,25 @@ export default function WeightChart({
 
     const sortedHistory = [...filteredHistory].reverse();
     const labels = sortedHistory.map((item) => {
-      const date = new Date(
-        item.timestamp + (item.timestamp.endsWith("Z") ? "" : "Z")
-      );
+      let date;
+      if (typeof item.timestamp === "number") {
+        date = new Date(item.timestamp);
+      } else if (/^\d+$/.test(item.timestamp)) {
+        date = new Date(Number(item.timestamp));
+      } else if (typeof item.timestamp === "string") {
+        if (item.timestamp.endsWith && item.timestamp.endsWith("Z")) {
+          date = new Date(item.timestamp);
+        } else if (item.timestamp.includes("T")) {
+          date = new Date(item.timestamp);
+        } else {
+          date = new Date(item.timestamp.replace(" ", "T"));
+        }
+      }
       return date.toLocaleTimeString("vi-VN", {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
+        hour12: false,
       });
     });
 
@@ -313,9 +335,24 @@ export default function WeightChart({
     }
     if (!statistics || !statistics.colors) return;
 
-    const colors = statistics.colors || {};
+    // Debug: In ra statistics.colors, labels, data để kiểm tra vì sao không có blue
+    console.log('[ColorChart] statistics.colors:', statistics.colors);
+    const hasBlue = Object.keys(statistics.colors).some(
+      (k) => k.toLowerCase() === 'blue'
+    );
+    console.log('[ColorChart] Has blue key:', hasBlue);
+
+    const rawColors = statistics.colors || {};
+    const colors = {};
+    Object.entries(rawColors).forEach(([k, v]) => {
+      colors[k.toUpperCase()] = v;
+    });
     const labels = ["RED", "GREEN", "BLUE", "UNKNOWN"];
     const data = labels.map((label) => colors[label] || 0);
+    console.log('[ColorChart] Chart labels:', labels);
+    console.log('[ColorChart] Chart data:', data);
+    console.log('[ColorChart] colors object after upper:', colors);
+
     const backgroundColors = ["#ef4444", "#22c55e", "#3b82f6", "#e5e7eb"];
 
     colorChartInstance.current = new Chart(colorChartRef.current, {
@@ -390,7 +427,12 @@ export default function WeightChart({
       return;
     }
 
-    const statuses = statistics.allStatuses || {};
+    // Chuẩn hóa key về viết hoa để tránh lỗi backend trả về 'blue' thường
+    const rawStatuses = statistics.allStatuses || {};
+    const statuses = {};
+    Object.entries(rawStatuses).forEach(([k, v]) => {
+      statuses[k.toUpperCase()] = v;
+    });
     const labels = [
       "LIGHT GREEN",
       "HEAVY GREEN",
@@ -478,6 +520,7 @@ export default function WeightChart({
             width: "100%",
             maxWidth: 600,
             margin: "0 auto",
+            position: "relative",
           }}
         >
           <canvas ref={recentChartRef}></canvas>
@@ -492,19 +535,33 @@ export default function WeightChart({
               Không còn dữ liệu cũ hơn
             </p>
           )}
+          {/* Đưa nút Reset ra góc trên bên phải biểu đồ */}
           <button
             onClick={resetPan}
             style={{
-              marginTop: "10px",
+              position: "absolute",
+              top: -90,
+              right: 12,
               padding: "8px 16px",
               backgroundColor: "#3b82f6",
               color: "white",
               border: "none",
               borderRadius: "5px",
               cursor: "pointer",
-              display: "block",
-              margin: "10px auto",
+              zIndex: 2,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+              transition: "background 0.2s, transform 0.1s",
             }}
+            onMouseOver={e => {
+              e.currentTarget.style.backgroundColor = "#2563eb";
+              e.currentTarget.style.transform = "scale(1.06)";
+              e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)";
+            }}
+            onMouseOut={e => {
+              e.currentTarget.style.backgroundColor = "#3b82f6";
+              e.currentTarget.style.transform = "none";
+            }}
+            title="Reset biểu đồ"
           >
             Reset
           </button>
